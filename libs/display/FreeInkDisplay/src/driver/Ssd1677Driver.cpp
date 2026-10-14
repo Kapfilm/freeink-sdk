@@ -2,8 +2,6 @@
 
 #include <BoardConfig.h>
 
-#include <vector>
-
 #include "../lut/Ssd1677Luts.h"
 
 namespace freeink {
@@ -450,36 +448,37 @@ void Ssd1677Driver::displayWindow(EpdBus& bus, const uint8_t* fb, const uint8_t*
   }
 
   const uint16_t windowWidthBytes = w / 8;
-  const uint32_t windowBufferSize = static_cast<uint32_t>(windowWidthBytes) * h;
-
-  std::vector<uint8_t> windowBuffer(windowBufferSize);
-  for (uint16_t row = 0; row < h; row++) {
-    const uint16_t srcY = y + row;
-    const uint32_t srcOffset = static_cast<uint32_t>(srcY) * _wb + (x / 8);
-    const uint32_t dstOffset = static_cast<uint32_t>(row) * windowWidthBytes;
-    memcpy(&windowBuffer[dstOffset], &fb[srcOffset], windowWidthBytes);
-  }
-
-  setRamArea(bus, x, y, w, h);
-  writeRam(bus, CMD_WRITE_RAM_BW, windowBuffer.data(), windowBufferSize);
-
-  if (prev != nullptr) {
-    std::vector<uint8_t> previousWindow(windowBufferSize);
+  const auto writeWindow = [&](uint8_t command, const uint8_t* source) {
+    setRamArea(bus, x, y, w, h);
+    bus.cmd(command);
     for (uint16_t row = 0; row < h; row++) {
-      const uint16_t srcY = y + row;
-      const uint32_t srcOffset = static_cast<uint32_t>(srcY) * _wb + (x / 8);
-      const uint32_t dstOffset = static_cast<uint32_t>(row) * windowWidthBytes;
-      memcpy(&previousWindow[dstOffset], &prev[srcOffset], windowWidthBytes);
+      const uint32_t sourceOffset = static_cast<uint32_t>(y + row) * _wb + (x / 8);
+      bus.data(source + sourceOffset, windowWidthBytes);
     }
-    writeRam(bus, CMD_WRITE_RAM_RED, previousWindow.data(), windowBufferSize);
+  };
+
+  // A SSD1677 window limits RAM writes, but the refresh waveform still runs over
+  // the whole panel. Seed both complete controller planes from the frame that is
+  // physically displayed before changing the window. Otherwise pixels outside
+  // the window can be driven by stale BW/RED (or old AA) plane contents, making
+  // the preserved book area alternate between light and dark on every update.
+  if (prev != nullptr) {
+    setRamArea(bus, 0, 0, _w, _h);
+    writeRam(bus, CMD_WRITE_RAM_BW, prev, _bufferSize);
+    writeRam(bus, CMD_WRITE_RAM_RED, prev, _bufferSize);
   }
+
+  // Stream framebuffer rows directly to controller RAM. The previous
+  // implementation assembled two contiguous window copies first; a 3/4-screen
+  // reader overlay needed roughly 78 KB of temporary heap and could reboot on
+  // fragmented memory while a book was open.
+  writeWindow(CMD_WRITE_RAM_BW, fb);
 
   refresh(bus, RefreshMode::Fast, turnOff);
 
   if (prev == nullptr) {
-    setRamArea(bus, x, y, w, h);
-    writeRam(bus, CMD_WRITE_RAM_BW, windowBuffer.data(), windowBufferSize);
-    writeRam(bus, CMD_WRITE_RAM_RED, windowBuffer.data(), windowBufferSize);
+    writeWindow(CMD_WRITE_RAM_BW, fb);
+    writeWindow(CMD_WRITE_RAM_RED, fb);
   }
 }
 

@@ -758,6 +758,20 @@ void FreeInkDisplay::displayWindow(uint16_t x, uint16_t y, uint16_t w, uint16_t 
   _shadowValid = false;
 #else
   _driver->displayWindow(_bus, frameBuffer, frameBufferActive, x, y, w, h, turnOffScreen);
+  // displayWindow does not swap the full framebuffers. Keep the active (displayed)
+  // host buffer authoritative for the refreshed region so the next popup repaint
+  // diffs against the menu that is actually on the panel, not against the book
+  // page that preceded it. Without this, selection moves repeatedly resurrect
+  // book glyphs and smear menu text.
+  if (frameBuffer && frameBufferActive && x % 8 == 0 && w % 8 == 0 && x + w <= displayWidth &&
+      y + h <= displayHeight) {
+    const uint16_t xByte = x / 8;
+    const uint16_t widthBytes = w / 8;
+    for (uint16_t row = 0; row < h; row++) {
+      const uint32_t offset = static_cast<uint32_t>(y + row) * displayWidthBytes + xByte;
+      memcpy(frameBufferActive + offset, frameBuffer + offset, widthBytes);
+    }
+  }
 #endif
 }
 
