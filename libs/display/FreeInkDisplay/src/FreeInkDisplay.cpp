@@ -863,6 +863,17 @@ void FreeInkDisplay::displayWindow(uint16_t x, uint16_t y, uint16_t w, uint16_t 
   _shadowValid = false;
 #else
   _driver->displayWindow(_bus, frameBuffer, frameBufferActive, x, y, w, h, turnOffScreen);
+#if FREEINK_DEVICE_X4
+  // A window update leaves the roles of the two host buffers unchanged.
+  // Keep the displayed frame current for the next window or full-frame diff.
+  if (_panelSel == PanelSel::X4 && frameBuffer && frameBufferActive && x % 8 == 0 && w % 8 == 0 &&
+      x + w <= displayWidth && y + h <= displayHeight) {
+    for (uint16_t row = 0; row < h; row++) {
+      const uint32_t offset = static_cast<uint32_t>(y + row) * displayWidthBytes + x / 8;
+      memcpy(frameBufferActive + offset, frameBuffer + offset, w / 8);
+    }
+  }
+#endif
 #endif
 }
 

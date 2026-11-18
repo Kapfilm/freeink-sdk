@@ -82,6 +82,36 @@ static void testStream(bool reverse, unsigned gateOffset) {
     if (w.command==0x10 || w.command==0x13) assert(w.transactions==1);
 }
 
+static void testSsdWindowRetainsBackground() {
+  EpdBus bus;
+  Ssd1677Driver driver;
+  driver.begin(bus);
+  const auto previous = frame(13);
+  const auto next = frame(47);
+  driver.display(bus, previous.data(), nullptr, RefreshMode::Half, false);
+  bus.clear();
+
+  constexpr uint16_t windowX = 200;
+  constexpr uint16_t windowWidth = 600;
+  constexpr uint16_t windowHeight = 480;
+  constexpr size_t stride = 800 / 8;
+  driver.displayWindow(bus, next.data(), previous.data(), windowX, 0, windowWidth, windowHeight, false);
+
+  assert(lastPlane(bus, 0x26) == previous);
+  bool seededBwPlane = false;
+  for (const auto& write : bus.writes) {
+    if (write.command == 0x24 && write.bytes == previous) seededBwPlane = true;
+  }
+  assert(seededBwPlane);
+
+  Bytes expectedWindow;
+  for (size_t row = 0; row < windowHeight; ++row) {
+    const auto first = next.begin() + row * stride + windowX / 8;
+    expectedWindow.insert(expectedWindow.end(), first, first + windowWidth / 8);
+  }
+  assert(lastPlane(bus, 0x24) == expectedWindow);
+}
+
 static void testSsd() {
   const auto b=frame(33);
   for (auto mode : {RefreshMode::Full,RefreshMode::Half,RefreshMode::Fast}) {
@@ -637,6 +667,7 @@ int main(int argc, char** argv) {
   testStream<Uc8179Driver>(true,0);
   testStream<Uc8279X4Driver>(false,120);
   testSsd();
+  testSsdWindowRetainsBackground();
   testAsyncFrame<Uc8179Driver>();
   testAsyncFrame<Uc8279X4Driver>();
   std::puts("Pro plane bytes, transaction counts, clean refreshes, power state and async frame ownership passed");
